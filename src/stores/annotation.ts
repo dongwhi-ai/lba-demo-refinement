@@ -3,7 +3,12 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import type { Annotation, FileKey, Filter } from "@/lib/sc04";
+import {
+  type Annotation,
+  FILE_KEYS,
+  type FileKey,
+  type Filter,
+} from "@/lib/sc04";
 
 const STORAGE_KEY = "lba-refine-v1";
 
@@ -44,6 +49,9 @@ interface AnnotationStore {
   activeFile: FileKey;
   setAnnotation: (file: FileKey, qaIdx: string, ann: Annotation) => void;
   clearAnnotation: (file: FileKey, qaIdx: string) => void;
+  hydrateAnnotations: (
+    files: Record<FileKey, Record<string, Annotation>>,
+  ) => void;
   setLastIdx: (file: FileKey, idx: number) => void;
   setFilter: (file: FileKey, filter: Filter) => void;
 }
@@ -83,6 +91,15 @@ export const useAnnotationStore = create<AnnotationStore>()(
             },
           };
         }),
+      hydrateAnnotations: (remoteFiles) =>
+        set((state) => ({
+          files: Object.fromEntries(
+            FILE_KEYS.map((key) => [
+              key,
+              { ...state.files[key], ann: remoteFiles[key] ?? {} },
+            ]),
+          ) as Record<FileKey, FileAnnState>,
+        })),
       setLastIdx: (file, idx) =>
         set((state) => ({
           activeFile: file,

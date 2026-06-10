@@ -23,7 +23,8 @@ export function Toolbar({
   onJump,
   onNextUnreviewed,
   onExportCurrent,
-  onExportAll,
+  onExportJson,
+  syncStatus,
 }: {
   idx: number;
   total: number;
@@ -33,7 +34,8 @@ export function Toolbar({
   onJump: (value: string) => void;
   onNextUnreviewed: () => void;
   onExportCurrent: () => void;
-  onExportAll: () => void;
+  onExportJson: () => void;
+  syncStatus: string;
 }) {
   const [jumpValue, setJumpValue] = useState("");
 
@@ -80,12 +82,13 @@ export function Toolbar({
       <Button variant="outline" size="sm" onClick={onNextUnreviewed}>
         다음 미검수
       </Button>
+      <span className="text-muted-foreground text-xs">{syncStatus}</span>
       <div className="ml-auto flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={onExportCurrent}>
-          현재 탭 xlsx 다운로드
+          xlsx 다운로드
         </Button>
-        <Button variant="outline" size="sm" onClick={onExportAll}>
-          전체 3개 다운로드
+        <Button variant="outline" size="sm" onClick={onExportJson}>
+          json 다운로드
         </Button>
       </div>
     </div>

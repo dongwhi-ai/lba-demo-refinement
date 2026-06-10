@@ -1,12 +1,9 @@
 "use client";
 
-import {
-  QueryClient,
-  QueryClientProvider,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   DecisionBar,
@@ -16,13 +13,15 @@ import { EvidencePanel, SampleCard } from "@/components/annotator/sample-card";
 import { StatusStrip } from "@/components/annotator/status-strip";
 import { TabBar } from "@/components/annotator/tab-bar";
 import { Toolbar } from "@/components/annotator/toolbar";
-import {
-  sc04FileQueryOptions,
-  useSc04File,
-} from "@/components/annotator/use-sc04-file";
+import { useSc04File } from "@/components/annotator/use-sc04-file";
 import { VideoPanel } from "@/components/annotator/video-panel";
 import { Button } from "@/components/ui/button";
+import { exportAnnotationsJson } from "@/lib/export-json";
 import { exportAnnotatedXlsx } from "@/lib/export-xlsx";
+import {
+  loadTabAnnotations,
+  saveTabAnnotations,
+} from "@/lib/remote-annotations";
 import type { FileKey, Filter, Status } from "@/lib/sc04";
 import {
   COL,
@@ -36,6 +35,31 @@ import {
 import { useAnnotationStore } from "@/stores/annotation";
 
 const routeApi = getRouteApi("/");
+const REMOTE_TAB_ID_KEY = "lba-refine-tab-id";
+
+type SyncStatus = "loading" | "saving" | "saved" | "error";
+
+const SYNC_STATUS_LABELS: Record<SyncStatus, string> = {
+  loading: "R2 불러오는 중",
+  saving: "R2 저장 중",
+  saved: "R2 저장됨",
+  error: "R2 저장 실패",
+};
+
+function createTabId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getOrCreateTabId(): string {
+  const existing = window.sessionStorage.getItem(REMOTE_TAB_ID_KEY);
+  if (existing) return existing;
+  const next = createTabId();
+  window.sessionStorage.setItem(REMOTE_TAB_ID_KEY, next);
+  return next;
+}
 
 export function Annotator() {
   const [queryClient] = useState(() => new QueryClient());
@@ -49,7 +73,8 @@ export function Annotator() {
 function AnnotatorInner() {
   const { file, i } = routeApi.useSearch();
   const navigate = routeApi.useNavigate();
-  const queryClient = useQueryClient();
+  const loadRemoteAnnotations = useServerFn(loadTabAnnotations);
+  const saveRemoteAnnotations = useServerFn(saveTabAnnotations);
   // SSR markup과 localStorage 반영 후 markup이 달라 hydration mismatch가 나지 않도록 mount 후 렌더
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -60,9 +85,21 @@ function AnnotatorInner() {
   const files = useAnnotationStore((state) => state.files);
   const setAnnotation = useAnnotationStore((state) => state.setAnnotation);
   const clearAnnotation = useAnnotationStore((state) => state.clearAnnotation);
+  const hydrateAnnotations = useAnnotationStore(
+    (state) => state.hydrateAnnotations,
+  );
   const setLastIdx = useAnnotationStore((state) => state.setLastIdx);
   const setFilter = useAnnotationStore((state) => state.setFilter);
   const fileState = files[file];
+  const [remoteTabId, setRemoteTabId] = useState<string | null>(null);
+  const [remoteReady, setRemoteReady] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
+  const saveSeqRef = useRef(0);
+  const saveQueueRef = useRef(Promise.resolve());
+  const skipNextRemoteSaveRef = useRef(false);
+  const dramaAnn = files.drama.ann;
+  const cookingAnn = files.cooking.ann;
+  const assemblyAnn = files.assembly.ann;
 
   const total = data?.rows.length ?? ROWS_PER_FILE;
   const idx = Math.min(Math.max(i - 1, 0), total - 1);
@@ -71,6 +108,79 @@ function AnnotatorInner() {
   const ann = qaKey ? fileState.ann[qaKey] : undefined;
 
   const [fixDraft, setFixDraft] = useState<FixDraft | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tabId = getOrCreateTabId();
+    setRemoteTabId(tabId);
+    setSyncStatus("loading");
+    loadRemoteAnnotations({ data: { tabId } })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.found) {
+          saveSeqRef.current = result.snapshot.clientSeq;
+          skipNextRemoteSaveRef.current = true;
+          hydrateAnnotations(result.snapshot.files);
+        }
+        setRemoteReady(true);
+        setSyncStatus("saved");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRemoteReady(true);
+        setSyncStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadRemoteAnnotations, hydrateAnnotations]);
+
+  const remoteFiles = useMemo(
+    () => ({
+      drama: dramaAnn,
+      cooking: cookingAnn,
+      assembly: assemblyAnn,
+    }),
+    [dramaAnn, cookingAnn, assemblyAnn],
+  );
+
+  useEffect(() => {
+    if (!remoteReady || !remoteTabId) return;
+    if (skipNextRemoteSaveRef.current) {
+      skipNextRemoteSaveRef.current = false;
+      setSyncStatus("saved");
+      return;
+    }
+
+    const clientSeq = saveSeqRef.current + 1;
+    saveSeqRef.current = clientSeq;
+    setSyncStatus("saving");
+
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(() =>
+        saveRemoteAnnotations({
+          data: { tabId: remoteTabId, clientSeq, files: remoteFiles },
+        }),
+      )
+      .then((result) => {
+        if (saveSeqRef.current !== clientSeq) return;
+        if (!result.saved && !result.ignored) {
+          setSyncStatus("error");
+          return;
+        }
+        if (result.ignored) {
+          saveSeqRef.current = Math.max(
+            saveSeqRef.current,
+            result.snapshot.clientSeq,
+          );
+        }
+        setSyncStatus("saved");
+      })
+      .catch(() => {
+        if (saveSeqRef.current === clientSeq) setSyncStatus("error");
+      });
+  }, [remoteReady, remoteTabId, remoteFiles, saveRemoteAnnotations]);
 
   // 기본 URL로 콜드 스타트하면 마지막 작업 위치로 복원 (lastIdx를 덮어쓰는 effect보다 먼저 선언)
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount 시 1회만 실행
@@ -223,14 +333,8 @@ function AnnotatorInner() {
     if (data) exportAnnotatedXlsx(data, fileState.ann);
   };
 
-  const exportAll = async () => {
-    for (const key of FILE_KEYS) {
-      const fileData = await queryClient.fetchQuery(sc04FileQueryOptions(key));
-      exportAnnotatedXlsx(
-        fileData,
-        useAnnotationStore.getState().files[key].ann,
-      );
-    }
+  const exportCurrentJson = () => {
+    if (data) exportAnnotationsJson(data, fileState.ann);
   };
 
   useEffect(() => {
@@ -315,7 +419,8 @@ function AnnotatorInner() {
         onJump={jump}
         onNextUnreviewed={nextUnreviewed}
         onExportCurrent={exportCurrent}
-        onExportAll={exportAll}
+        onExportJson={exportCurrentJson}
+        syncStatus={SYNC_STATUS_LABELS[syncStatus]}
       />
       <StatusStrip
         statuses={statuses}
