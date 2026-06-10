@@ -1,22 +1,19 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-import type { Annotation, FileKey } from "@/lib/sc04";
+import { type Annotation, FILE_KEYS, type FileKey } from "@/lib/sc04";
 
-export type RemoteAnnotationFiles = Record<FileKey, Record<string, Annotation>>;
-
-export interface RemoteAnnotationSnapshot {
+export interface RemoteAnnotationFileSnapshot {
   version: 1;
-  tabId: string;
-  clientSeq: number;
+  file: FileKey;
   updatedAt: string;
-  files: RemoteAnnotationFiles;
+  ann: Record<string, Annotation>;
 }
 
-const TAB_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const REMOTE_SCHEMA_VERSION = 1;
-const R2_KEY_PREFIX = "annotations/tabs";
+const R2_KEY_PREFIX = "annotations/files";
 
+const fileKeySchema = z.enum(FILE_KEYS);
 const fixCategorySchema = z.enum(["Aa", "Ab", "Ac", "Ba", "Bb", "C"]);
 const statusSchema = z.enum(["accept", "fix", "del"]);
 const annotationSchema = z.object({
@@ -25,25 +22,22 @@ const annotationSchema = z.object({
   m: z.string().optional(),
 });
 const annotationRecordSchema = z.record(z.string(), annotationSchema);
-const annotationFilesSchema = z.object({
-  drama: annotationRecordSchema,
-  cooking: annotationRecordSchema,
-  assembly: annotationRecordSchema,
+const fileInputSchema = z.object({
+  file: fileKeySchema,
 });
-const tabIdInputSchema = z.object({
-  tabId: z.string().min(1).max(128).regex(TAB_ID_PATTERN),
+const patchInputSchema = fileInputSchema.extend({
+  qaIdx: z.string().min(1).max(64),
+  annotation: annotationSchema.nullable(),
 });
-const saveInputSchema = tabIdInputSchema.extend({
-  clientSeq: z.number().int().nonnegative(),
-  files: annotationFilesSchema,
-});
-const snapshotSchema = saveInputSchema.extend({
+const snapshotSchema = z.object({
   version: z.literal(REMOTE_SCHEMA_VERSION),
+  file: fileKeySchema,
   updatedAt: z.string(),
+  ann: annotationRecordSchema,
 });
 
-function annotationObjectKey(tabId: string): string {
-  return `${R2_KEY_PREFIX}/${tabId}.json`;
+function annotationObjectKey(file: FileKey): string {
+  return `${R2_KEY_PREFIX}/${file}.json`;
 }
 
 async function getBucket(): Promise<R2Bucket> {
@@ -53,76 +47,88 @@ async function getBucket(): Promise<R2Bucket> {
 
 async function readSnapshot(
   bucket: R2Bucket,
-  tabId: string,
-): Promise<{ etag: string; snapshot: RemoteAnnotationSnapshot } | null> {
-  const object = await bucket.get(annotationObjectKey(tabId));
+  file: FileKey,
+): Promise<{ etag: string; snapshot: RemoteAnnotationFileSnapshot } | null> {
+  const object = await bucket.get(annotationObjectKey(file));
   if (!object) return null;
   const parsed = snapshotSchema.parse(await object.json());
   return { etag: object.etag, snapshot: parsed };
 }
 
-export const loadTabAnnotations = createServerFn({ method: "GET" })
-  .inputValidator(tabIdInputSchema)
+function applyAnnotationPatch(
+  ann: Record<string, Annotation>,
+  qaIdx: string,
+  annotation: Annotation | null,
+): Record<string, Annotation> {
+  const next = { ...ann };
+  if (annotation) {
+    next[qaIdx] = annotation;
+  } else {
+    delete next[qaIdx];
+  }
+  return next;
+}
+
+function createSnapshot(
+  file: FileKey,
+  ann: Record<string, Annotation>,
+): RemoteAnnotationFileSnapshot {
+  return {
+    version: REMOTE_SCHEMA_VERSION,
+    file,
+    updatedAt: new Date().toISOString(),
+    ann,
+  };
+}
+
+async function writeSnapshot(
+  bucket: R2Bucket,
+  snapshot: RemoteAnnotationFileSnapshot,
+  etag: string | null,
+): Promise<R2Object | null> {
+  return bucket.put(
+    annotationObjectKey(snapshot.file),
+    JSON.stringify(snapshot),
+    {
+      httpMetadata: { contentType: "application/json" },
+      onlyIf: etag ? { etagMatches: etag } : { etagDoesNotMatch: "*" },
+    },
+  );
+}
+
+export const loadFileAnnotations = createServerFn({ method: "GET" })
+  .inputValidator(fileInputSchema)
   .handler(async ({ data }) => {
     const bucket = await getBucket();
-    const current = await readSnapshot(bucket, data.tabId);
+    const current = await readSnapshot(bucket, data.file);
     if (!current) return { found: false as const };
     return { found: true as const, snapshot: current.snapshot };
   });
 
-export const saveTabAnnotations = createServerFn({ method: "POST" })
-  .inputValidator(saveInputSchema)
+export const patchFileAnnotation = createServerFn({ method: "POST" })
+  .inputValidator(patchInputSchema)
   .handler(async ({ data }) => {
     const bucket = await getBucket();
-    const current = await readSnapshot(bucket, data.tabId);
 
-    if (current && current.snapshot.clientSeq > data.clientSeq) {
-      return {
-        saved: false as const,
-        ignored: true as const,
-        snapshot: current.snapshot,
-      };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await readSnapshot(bucket, data.file);
+      const next = createSnapshot(
+        data.file,
+        applyAnnotationPatch(
+          current?.snapshot.ann ?? {},
+          data.qaIdx,
+          data.annotation,
+        ),
+      );
+      const written = await writeSnapshot(bucket, next, current?.etag ?? null);
+      if (written) {
+        return { saved: true as const, snapshot: next };
+      }
     }
 
-    const next: RemoteAnnotationSnapshot = {
-      version: REMOTE_SCHEMA_VERSION,
-      tabId: data.tabId,
-      clientSeq: data.clientSeq,
-      updatedAt: new Date().toISOString(),
-      files: data.files,
-    };
-    const body = JSON.stringify(next);
-    const putOptions = {
-      httpMetadata: { contentType: "application/json" },
-      ...(current ? { onlyIf: { etagMatches: current.etag } } : {}),
-    };
-    const written = await bucket.put(
-      annotationObjectKey(data.tabId),
-      body,
-      putOptions,
-    );
-
-    if (written) {
-      return { saved: true as const, ignored: false as const, snapshot: next };
-    }
-
-    const latest = await readSnapshot(bucket, data.tabId);
-    if (latest && latest.snapshot.clientSeq > data.clientSeq) {
-      return {
-        saved: false as const,
-        ignored: true as const,
-        snapshot: latest.snapshot,
-      };
-    }
-
-    const retried = await bucket.put(annotationObjectKey(data.tabId), body, {
-      httpMetadata: { contentType: "application/json" },
-      ...(latest ? { onlyIf: { etagMatches: latest.etag } } : {}),
-    });
-
+    const latest = await readSnapshot(bucket, data.file);
     return {
-      saved: Boolean(retried),
-      ignored: false as const,
-      snapshot: next,
+      saved: false as const,
+      snapshot: latest?.snapshot ?? createSnapshot(data.file, {}),
     };
   });

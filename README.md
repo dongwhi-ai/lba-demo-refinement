@@ -17,7 +17,7 @@ pnpm run dev   # http://localhost:3000
 - 채택/폐기/수정 저장 시 현재 필터 기준 다음 행으로 자동 이동.
 - 잘못 판정한 행은 상태 스트립(500칸)이나 이동 입력으로 돌아가 다른 판정으로 덮어쓰거나 `검수 취소`.
 - 키보드: `1/2/3` 판정, `←/→` 이동, `Enter` 저장, `Esc` 수정 패널 닫기.
-- 진행사항은 localStorage(`lba-refine-v1`)에 cache되고, annotation은 browser tab/session별 R2 object에 저장.
+- 진행사항은 localStorage(`lba-refine-v1`)에 cache되고, annotation은 파일별 shared R2 object에 저장.
 - **xlsx/json 다운로드**: 현재 탭 파일을 다운로드. xlsx는 원본 16열 그대로 + `refinement` 열 기입(채택 → 빈칸, 수정 → `fix, Ab, Ac, 메모`, 폐기 → `del`) + 후미에 `검수상태` 보조열(채택/수정/폐기/미검수, 채택·미검수 구분용 — 불필요하면 열 삭제).
 
 ## 데이터 재생성

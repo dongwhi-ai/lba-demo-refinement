@@ -19,10 +19,10 @@ import { Button } from "@/components/ui/button";
 import { exportAnnotationsJson } from "@/lib/export-json";
 import { exportAnnotatedXlsx } from "@/lib/export-xlsx";
 import {
-  loadTabAnnotations,
-  saveTabAnnotations,
+  loadFileAnnotations,
+  patchFileAnnotation,
 } from "@/lib/remote-annotations";
-import type { FileKey, Filter, Status } from "@/lib/sc04";
+import type { Annotation, FileKey, Filter, Status } from "@/lib/sc04";
 import {
   COL,
   FILE_KEYS,
@@ -35,7 +35,6 @@ import {
 import { useAnnotationStore } from "@/stores/annotation";
 
 const routeApi = getRouteApi("/");
-const REMOTE_TAB_ID_KEY = "lba-refine-tab-id";
 
 type SyncStatus = "loading" | "saving" | "saved" | "error";
 
@@ -45,21 +44,6 @@ const SYNC_STATUS_LABELS: Record<SyncStatus, string> = {
   saved: "R2 저장됨",
   error: "R2 저장 실패",
 };
-
-function createTabId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
-function getOrCreateTabId(): string {
-  const existing = window.sessionStorage.getItem(REMOTE_TAB_ID_KEY);
-  if (existing) return existing;
-  const next = createTabId();
-  window.sessionStorage.setItem(REMOTE_TAB_ID_KEY, next);
-  return next;
-}
 
 export function Annotator() {
   const [queryClient] = useState(() => new QueryClient());
@@ -73,8 +57,8 @@ export function Annotator() {
 function AnnotatorInner() {
   const { file, i } = routeApi.useSearch();
   const navigate = routeApi.useNavigate();
-  const loadRemoteAnnotations = useServerFn(loadTabAnnotations);
-  const saveRemoteAnnotations = useServerFn(saveTabAnnotations);
+  const loadRemoteFile = useServerFn(loadFileAnnotations);
+  const patchRemoteFile = useServerFn(patchFileAnnotation);
   // SSR markup과 localStorage 반영 후 markup이 달라 hydration mismatch가 나지 않도록 mount 후 렌더
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -91,15 +75,9 @@ function AnnotatorInner() {
   const setLastIdx = useAnnotationStore((state) => state.setLastIdx);
   const setFilter = useAnnotationStore((state) => state.setFilter);
   const fileState = files[file];
-  const [remoteTabId, setRemoteTabId] = useState<string | null>(null);
-  const [remoteReady, setRemoteReady] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
-  const saveSeqRef = useRef(0);
-  const saveQueueRef = useRef(Promise.resolve());
-  const skipNextRemoteSaveRef = useRef(false);
-  const dramaAnn = files.drama.ann;
-  const cookingAnn = files.cooking.ann;
-  const assemblyAnn = files.assembly.ann;
+  const localMutationRef = useRef(0);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const total = data?.rows.length ?? ROWS_PER_FILE;
   const idx = Math.min(Math.max(i - 1, 0), total - 1);
@@ -111,76 +89,60 @@ function AnnotatorInner() {
 
   useEffect(() => {
     let cancelled = false;
-    const tabId = getOrCreateTabId();
-    setRemoteTabId(tabId);
+    const mutationVersion = localMutationRef.current;
     setSyncStatus("loading");
-    loadRemoteAnnotations({ data: { tabId } })
-      .then((result) => {
+    Promise.all(
+      FILE_KEYS.map(async (key) => {
+        const result = await loadRemoteFile({ data: { file: key } });
+        return [key, result.found ? result.snapshot.ann : {}] as const;
+      }),
+    )
+      .then((entries) => {
         if (cancelled) return;
-        if (result.found) {
-          saveSeqRef.current = result.snapshot.clientSeq;
-          skipNextRemoteSaveRef.current = true;
-          hydrateAnnotations(result.snapshot.files);
+        if (localMutationRef.current === mutationVersion) {
+          hydrateAnnotations(
+            Object.fromEntries(entries) as Record<
+              FileKey,
+              Record<string, Annotation>
+            >,
+          );
+          setSyncStatus("saved");
         }
-        setRemoteReady(true);
-        setSyncStatus("saved");
       })
       .catch(() => {
         if (cancelled) return;
-        setRemoteReady(true);
         setSyncStatus("error");
       });
     return () => {
       cancelled = true;
     };
-  }, [loadRemoteAnnotations, hydrateAnnotations]);
+  }, [loadRemoteFile, hydrateAnnotations]);
 
-  const remoteFiles = useMemo(
-    () => ({
-      drama: dramaAnn,
-      cooking: cookingAnn,
-      assembly: assemblyAnn,
-    }),
-    [dramaAnn, cookingAnn, assemblyAnn],
+  const saveRemoteRow = useCallback(
+    (
+      targetFile: FileKey,
+      targetQaKey: string,
+      annotation: Annotation | null,
+    ) => {
+      localMutationRef.current += 1;
+      setSyncStatus("saving");
+
+      saveQueueRef.current = saveQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const result = await patchRemoteFile({
+            data: {
+              file: targetFile,
+              qaIdx: targetQaKey,
+              annotation,
+            },
+          });
+          setSyncStatus(result.saved ? "saved" : "error");
+        })
+        .catch(() => setSyncStatus("error"));
+    },
+    [patchRemoteFile],
   );
-
-  useEffect(() => {
-    if (!remoteReady || !remoteTabId) return;
-    if (skipNextRemoteSaveRef.current) {
-      skipNextRemoteSaveRef.current = false;
-      setSyncStatus("saved");
-      return;
-    }
-
-    const clientSeq = saveSeqRef.current + 1;
-    saveSeqRef.current = clientSeq;
-    setSyncStatus("saving");
-
-    saveQueueRef.current = saveQueueRef.current
-      .catch(() => undefined)
-      .then(() =>
-        saveRemoteAnnotations({
-          data: { tabId: remoteTabId, clientSeq, files: remoteFiles },
-        }),
-      )
-      .then((result) => {
-        if (saveSeqRef.current !== clientSeq) return;
-        if (!result.saved && !result.ignored) {
-          setSyncStatus("error");
-          return;
-        }
-        if (result.ignored) {
-          saveSeqRef.current = Math.max(
-            saveSeqRef.current,
-            result.snapshot.clientSeq,
-          );
-        }
-        setSyncStatus("saved");
-      })
-      .catch(() => {
-        if (saveSeqRef.current === clientSeq) setSyncStatus("error");
-      });
-  }, [remoteReady, remoteTabId, remoteFiles, saveRemoteAnnotations]);
 
   // 기본 URL로 콜드 스타트하면 마지막 작업 위치로 복원 (lastIdx를 덮어쓰는 effect보다 먼저 선언)
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount 시 1회만 실행
@@ -245,11 +207,13 @@ function AnnotatorInner() {
     (status: Status) => {
       if (!qaKey) return;
       // 수정→채택/폐기 전환 시 카테고리·메모는 보존 (실수 클릭으로 메모가 유실되지 않도록)
-      setAnnotation(file, qaKey, { s: status, c: ann?.c, m: ann?.m });
+      const nextAnn = { s: status, c: ann?.c, m: ann?.m };
+      setAnnotation(file, qaKey, nextAnn);
+      saveRemoteRow(file, qaKey, nextAnn);
       setFixDraft(null);
       advance(idx);
     },
-    [qaKey, file, ann, setAnnotation, advance, idx],
+    [qaKey, file, ann, setAnnotation, saveRemoteRow, advance, idx],
   );
 
   const openFix = useCallback(() => {
@@ -260,14 +224,23 @@ function AnnotatorInner() {
   const saveFix = useCallback(() => {
     if (!qaKey || !fixDraft || fixDraft.cats.length === 0) return;
     const memo = fixDraft.memo.trim();
-    setAnnotation(file, qaKey, {
+    const nextAnn = {
       s: "fix",
       c: fixDraft.cats,
       m: memo === "" ? undefined : memo,
-    });
+    } satisfies Annotation;
+    setAnnotation(file, qaKey, nextAnn);
+    saveRemoteRow(file, qaKey, nextAnn);
     setFixDraft(null);
     advance(idx);
-  }, [qaKey, fixDraft, file, setAnnotation, advance, idx]);
+  }, [qaKey, fixDraft, file, setAnnotation, saveRemoteRow, advance, idx]);
+
+  const clearCurrent = useCallback(() => {
+    if (!qaKey) return;
+    clearAnnotation(file, qaKey);
+    saveRemoteRow(file, qaKey, null);
+    setFixDraft(null);
+  }, [qaKey, file, clearAnnotation, saveRemoteRow]);
 
   const stepTarget = useCallback(
     (direction: 1 | -1) => {
@@ -444,7 +417,7 @@ function AnnotatorInner() {
             onAccept={() => decide("accept")}
             onOpenFix={openFix}
             onDel={() => decide("del")}
-            onClear={() => qaKey && clearAnnotation(file, qaKey)}
+            onClear={clearCurrent}
             onDraftChange={setFixDraft}
             onSaveFix={saveFix}
             onCancelFix={() => setFixDraft(null)}
