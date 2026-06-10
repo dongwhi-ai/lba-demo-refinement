@@ -159,10 +159,10 @@ function AnnotatorInner() {
     advance(idx);
   }, [qaKey, fixDraft, file, setAnnotation, advance, idx]);
 
-  const step = useCallback(
+  const stepTarget = useCallback(
     (direction: 1 | -1) => {
-      if (!data) return;
-      const next = findNextIndex(
+      if (!data) return null;
+      return findNextIndex(
         data.rows.length,
         idx,
         (j) =>
@@ -172,9 +172,16 @@ function AnnotatorInner() {
           ),
         { wrap: false, direction },
       );
+    },
+    [data, idx, fileState],
+  );
+
+  const step = useCallback(
+    (direction: 1 | -1) => {
+      const next = stepTarget(direction);
       if (next !== null) goTo(next);
     },
-    [data, idx, fileState, goTo],
+    [stepTarget, goTo],
   );
 
   const nextUnreviewed = () => {
@@ -339,10 +346,18 @@ function AnnotatorInner() {
           />
           <EvidencePanel row={row} />
           <div className="flex items-center justify-between">
-            <Button variant="outline" onClick={() => step(-1)}>
+            <Button
+              variant="outline"
+              disabled={stepTarget(-1) === null}
+              onClick={() => step(-1)}
+            >
               ← 이전
             </Button>
-            <Button variant="outline" onClick={() => step(1)}>
+            <Button
+              variant="outline"
+              disabled={stepTarget(1) === null}
+              onClick={() => step(1)}
+            >
               다음 →
             </Button>
           </div>
