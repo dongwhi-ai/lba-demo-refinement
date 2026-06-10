@@ -84,8 +84,17 @@ function AnnotatorInner() {
   const row = data?.rows[idx];
   const qaKey = row ? String(row[COL.QA_IDX]) : null;
   const ann = qaKey ? fileState.ann[qaKey] : undefined;
+  const currentStatus = rowStatus(ann);
 
   const [fixDraft, setFixDraft] = useState<FixDraft | null>(null);
+  const visibleFixDraft = useMemo(
+    () =>
+      fixDraft ??
+      (currentStatus === "fix"
+        ? { cats: ann?.c ?? [], memo: ann?.m ?? "" }
+        : null),
+    [fixDraft, currentStatus, ann],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -222,18 +231,28 @@ function AnnotatorInner() {
   }, [fixDraft, ann]);
 
   const saveFix = useCallback(() => {
-    if (!qaKey || !fixDraft || fixDraft.cats.length === 0) return;
-    const memo = fixDraft.memo.trim();
+    if (!qaKey || !visibleFixDraft || visibleFixDraft.cats.length === 0) {
+      return;
+    }
+    const memo = visibleFixDraft.memo.trim();
     const nextAnn = {
       s: "fix",
-      c: fixDraft.cats,
+      c: visibleFixDraft.cats,
       m: memo === "" ? undefined : memo,
     } satisfies Annotation;
     setAnnotation(file, qaKey, nextAnn);
     saveRemoteRow(file, qaKey, nextAnn);
     setFixDraft(null);
     advance(idx);
-  }, [qaKey, fixDraft, file, setAnnotation, saveRemoteRow, advance, idx]);
+  }, [
+    qaKey,
+    visibleFixDraft,
+    file,
+    setAnnotation,
+    saveRemoteRow,
+    advance,
+    idx,
+  ]);
 
   const clearCurrent = useCallback(() => {
     if (!qaKey) return;
@@ -332,7 +351,7 @@ function AnnotatorInner() {
           step(1);
           break;
         case "Enter":
-          if (fixDraft) saveFix();
+          if (visibleFixDraft) saveFix();
           break;
         case "Escape":
           setFixDraft(null);
@@ -341,7 +360,7 @@ function AnnotatorInner() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [decide, openFix, step, fixDraft, saveFix]);
+  }, [decide, openFix, step, visibleFixDraft, saveFix]);
 
   const statuses = useMemo(
     () =>
@@ -412,8 +431,8 @@ function AnnotatorInner() {
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           <SampleCard row={row} />
           <DecisionBar
-            status={rowStatus(ann)}
-            fixDraft={fixDraft}
+            status={currentStatus}
+            fixDraft={visibleFixDraft}
             onAccept={() => decide("accept")}
             onOpenFix={openFix}
             onDel={() => decide("del")}
