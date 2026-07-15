@@ -189,14 +189,13 @@ function AnnotatorInner() {
     [patchRemoteFile],
   );
 
-  // 서버에 현재 파일의 annotation이 하나도 없으면 1차 판정을 seed로 채움 (파일당 1회 시도,
-  // 서버는 이미 저장된 판정을 보존하는 merge라 동시 접속에도 안전)
+  // 판정이 없는 행을 1차 판정 seed로 채움 (파일당 1회 시도). 서버는 이미 저장된 판정을
+  // 보존하는 merge라, 비어 있는(회색) 행만 연한 seed로 채워지고 확정 판정은 유지된다.
+  // 이미 seed가 다 차 있으면 서버가 변경 없음으로 감지해 쓰지 않는다.
   useEffect(() => {
     if (!remoteReady || !data || data.key !== file) return;
     if (seedTriedRef.current[file]) return;
     seedTriedRef.current[file] = true;
-    const current = useAnnotationStore.getState().files[file].ann;
-    if (Object.keys(current).length > 0) return;
 
     localMutationRef.current += 1;
     setSyncStatus("saving");
