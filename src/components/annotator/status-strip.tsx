@@ -12,6 +12,9 @@ const STATUS_CLASS: Record<RowStatus, string> = {
   del: "bg-red-500/80 hover:bg-red-500",
 };
 
+// 한 줄에 표시할 영상 수 (영상당 25문항 → 50칸/줄)
+const VIDEOS_PER_ROW = 2;
+
 // 같은 video_idx가 연속된 구간을 하나의 세그먼트로 묶는다
 function videoGroups(videoIndices: number[]): { start: number; end: number }[] {
   const groups: { start: number; end: number }[] = [];
@@ -41,28 +44,41 @@ export const StatusStrip = memo(function StatusStrip({
   currentIdx: number;
   onJump: (idx: number) => void;
 }) {
+  const groups = videoGroups(videoIndices);
+  // 영상 VIDEOS_PER_ROW개씩 한 줄로 묶는다 (영상 사이 간격은 유지)
+  const rows: { start: number; end: number }[][] = [];
+  for (let i = 0; i < groups.length; i += VIDEOS_PER_ROW) {
+    rows.push(groups.slice(i, i + VIDEOS_PER_ROW));
+  }
+
   return (
-    <div className="flex flex-wrap gap-x-1.5 gap-y-1 border p-1">
-      {videoGroups(videoIndices).map((group) => (
-        <div key={group.start} className="flex gap-px">
-          {statuses.slice(group.start, group.end + 1).map((status, offset) => {
-            const idx = group.start + offset;
-            return (
-              <button
-                type="button"
-                key={qaIndices[idx]}
-                title={`#${idx + 1} · 영상 ${videoIndices[idx]} · QA_idx ${qaIndices[idx]} · ${STATUS_LABELS[status]}${seeds[idx] ? " (1차 seed 미확정)" : ""}`}
-                onClick={() => onJump(idx)}
-                className={cn(
-                  "h-3 w-2",
-                  STATUS_CLASS[status],
-                  // 미확정 seed는 옅은 색으로 확정 판정과 구분
-                  seeds[idx] && "opacity-40 hover:opacity-80",
-                  idx === currentIdx && "ring-2 ring-ring",
-                )}
-              />
-            );
-          })}
+    <div className="flex flex-col gap-1 border p-1">
+      {rows.map((rowGroups) => (
+        <div key={rowGroups[0].start} className="flex gap-x-2">
+          {rowGroups.map((group) => (
+            <div key={group.start} className="flex gap-px">
+              {statuses
+                .slice(group.start, group.end + 1)
+                .map((status, offset) => {
+                  const idx = group.start + offset;
+                  return (
+                    <button
+                      type="button"
+                      key={qaIndices[idx]}
+                      title={`#${idx + 1} · 영상 ${videoIndices[idx]} · QA_idx ${qaIndices[idx]} · ${STATUS_LABELS[status]}${seeds[idx] ? " (1차 seed 미확정)" : ""}`}
+                      onClick={() => onJump(idx)}
+                      className={cn(
+                        "h-5 w-3.5",
+                        STATUS_CLASS[status],
+                        // 미확정 seed는 옅은 색으로 확정 판정과 구분
+                        seeds[idx] && "opacity-40 hover:opacity-80",
+                        idx === currentIdx && "ring-2 ring-ring",
+                      )}
+                    />
+                  );
+                })}
+            </div>
+          ))}
         </div>
       ))}
     </div>
