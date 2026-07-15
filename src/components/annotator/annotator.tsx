@@ -35,6 +35,7 @@ import type {
   Status,
 } from "@/lib/sc04";
 import {
+  buildSeedAnnotation,
   buildSeedAnnotations,
   COL,
   FILE_KEYS,
@@ -318,11 +319,18 @@ function AnnotatorInner() {
   ]);
 
   const clearCurrent = useCallback(() => {
-    if (!qaKey) return;
-    clearAnnotation(file, qaKey);
-    saveRemoteRow(file, qaKey, null);
+    if (!qaKey || !row) return;
+    // 검수 취소 = 1차 seed 상태로 되돌림 (회색 미검수가 아니라 연한 1차 색 유지)
+    const seed = buildSeedAnnotation(row);
+    if (seed) {
+      setAnnotation(file, qaKey, seed);
+      saveRemoteRow(file, qaKey, seed);
+    } else {
+      clearAnnotation(file, qaKey);
+      saveRemoteRow(file, qaKey, null);
+    }
     setFixDraft(null);
-  }, [qaKey, file, clearAnnotation, saveRemoteRow]);
+  }, [qaKey, row, file, setAnnotation, clearAnnotation, saveRemoteRow]);
 
   const stepTarget = useCallback(
     (direction: 1 | -1) => {
@@ -538,7 +546,6 @@ function AnnotatorInner() {
           <PrevReviewPanel row={row} />
           <DecisionBar
             status={currentStatus}
-            seeded={!!ann?.seed}
             fixDraft={visibleFixDraft}
             onAccept={() => decide("accept")}
             onOpenFix={openFix}

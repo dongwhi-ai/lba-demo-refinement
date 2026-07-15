@@ -54,7 +54,8 @@ export const StatusStrip = memo(function StatusStrip({
   return (
     <div className="flex flex-col gap-1 border p-1">
       {rows.map((rowGroups) => (
-        <div key={rowGroups[0].start} className="flex gap-x-2">
+        // 영상 2개를 좌우로 꽉 채우도록 2열 그리드 (마지막 줄 1개 영상은 왼쪽 절반 유지)
+        <div key={rowGroups[0].start} className="grid grid-cols-2 gap-2">
           {rowGroups.map((group) => (
             <div key={group.start} className="flex gap-px">
               {statuses
@@ -68,7 +69,7 @@ export const StatusStrip = memo(function StatusStrip({
                       title={`#${idx + 1} · 영상 ${videoIndices[idx]} · QA_idx ${qaIndices[idx]} · ${STATUS_LABELS[status]}${seeds[idx] ? " (1차 seed 미확정)" : ""}`}
                       onClick={() => onJump(idx)}
                       className={cn(
-                        "h-5 w-3.5",
+                        "h-5 min-w-0 flex-1",
                         STATUS_CLASS[status],
                         // 미확정 seed는 옅은 색으로 확정 판정과 구분
                         seeds[idx] && "opacity-40 hover:opacity-80",

@@ -136,21 +136,27 @@ export function parseRefinement(refinement: string): {
   return { cats, memo: tokens.slice(i).join(", ") };
 }
 
-// 1차 판정(검수상태/refinement 열)을 2차의 초기 seed annotation으로 변환
+// 한 행의 1차 판정(검수상태/refinement 열)을 2차 seed annotation으로 변환
+export function buildSeedAnnotation(row: Sc04Row): Annotation | null {
+  const prev = parsePrevStatus(row[COL.PREV_STATUS]);
+  if (!prev) return null;
+  const entry: Annotation = { s: prev, seed: true };
+  if (prev === "fix") {
+    const { cats, memo } = parseRefinement(String(row[COL.REFINEMENT] ?? ""));
+    if (cats.length > 0) entry.c = cats;
+    if (memo !== "") entry.m = memo;
+  }
+  return entry;
+}
+
+// 1차 판정을 2차의 초기 seed annotation 맵으로 변환
 export function buildSeedAnnotations(
   rows: Sc04Row[],
 ): Record<string, Annotation> {
   const ann: Record<string, Annotation> = {};
   for (const row of rows) {
-    const prev = parsePrevStatus(row[COL.PREV_STATUS]);
-    if (!prev) continue;
-    const entry: Annotation = { s: prev, seed: true };
-    if (prev === "fix") {
-      const { cats, memo } = parseRefinement(String(row[COL.REFINEMENT] ?? ""));
-      if (cats.length > 0) entry.c = cats;
-      if (memo !== "") entry.m = memo;
-    }
-    ann[String(row[COL.QA_IDX])] = entry;
+    const entry = buildSeedAnnotation(row);
+    if (entry) ann[String(row[COL.QA_IDX])] = entry;
   }
   return ann;
 }
