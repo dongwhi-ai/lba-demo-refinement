@@ -25,6 +25,7 @@ import { exportAnnotatedXlsx } from "@/lib/export-xlsx";
 import {
   loadFileAnnotations,
   patchFileAnnotation,
+  seedFileAnnotations,
 } from "@/lib/remote-annotations";
 import type {
   Annotation,
@@ -34,9 +35,11 @@ import type {
   Status,
 } from "@/lib/sc04";
 import {
+  buildSeedAnnotations,
   COL,
   FILE_KEYS,
   findNextIndex,
+  isConfirmed,
   matchesFilter,
   matchesPrevFilter,
   parsePrevStatus,
@@ -74,6 +77,7 @@ function AnnotatorInner() {
   const navigate = routeApi.useNavigate();
   const loadRemoteFile = useServerFn(loadFileAnnotations);
   const patchRemoteFile = useServerFn(patchFileAnnotation);
+  const seedRemoteFile = useServerFn(seedFileAnnotations);
   // SSR markup과 localStorage 반영 후 markup이 달라 hydration mismatch가 나지 않도록 mount 후 렌더
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -87,13 +91,19 @@ function AnnotatorInner() {
   const hydrateAnnotations = useAnnotationStore(
     (state) => state.hydrateAnnotations,
   );
+  const hydrateFileAnnotations = useAnnotationStore(
+    (state) => state.hydrateFileAnnotations,
+  );
   const setLastIdx = useAnnotationStore((state) => state.setLastIdx);
   const setFilter = useAnnotationStore((state) => state.setFilter);
   const setPrevFilter = useAnnotationStore((state) => state.setPrevFilter);
   const fileState = files[file];
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
+  // 서버 스냅샷을 최소 1회 성공적으로 반영했는지 (seed 판단은 그 이후에만)
+  const [remoteReady, setRemoteReady] = useState(false);
   const localMutationRef = useRef(0);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const seedTriedRef = useRef<Partial<Record<FileKey, boolean>>>({});
 
   const total = data?.rows.length ?? ROWS_PER_FILE;
   const idx = Math.min(Math.max(i - 1, 0), total - 1);
@@ -136,6 +146,7 @@ function AnnotatorInner() {
             );
             setSyncStatus("saved");
           }
+          setRemoteReady(true);
         })
         .catch(() => {
           if (cancelled) return;
@@ -177,6 +188,30 @@ function AnnotatorInner() {
     [patchRemoteFile],
   );
 
+  // 서버에 현재 파일의 annotation이 하나도 없으면 1차 판정을 seed로 채움 (파일당 1회 시도,
+  // 서버는 이미 저장된 판정을 보존하는 merge라 동시 접속에도 안전)
+  useEffect(() => {
+    if (!remoteReady || !data || data.key !== file) return;
+    if (seedTriedRef.current[file]) return;
+    seedTriedRef.current[file] = true;
+    const current = useAnnotationStore.getState().files[file].ann;
+    if (Object.keys(current).length > 0) return;
+
+    localMutationRef.current += 1;
+    setSyncStatus("saving");
+    const rows = data.rows;
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const result = await seedRemoteFile({
+          data: { file, ann: buildSeedAnnotations(rows) },
+        });
+        hydrateFileAnnotations(file, result.snapshot.ann);
+        setSyncStatus(result.saved ? "saved" : "error");
+      })
+      .catch(() => setSyncStatus("error"));
+  }, [remoteReady, data, file, seedRemoteFile, hydrateFileAnnotations]);
+
   // 기본 URL로 콜드 스타트하면 마지막 작업 위치로 복원 (lastIdx를 덮어쓰는 effect보다 먼저 선언)
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount 시 1회만 실행
   useEffect(() => {
@@ -207,14 +242,6 @@ function AnnotatorInner() {
     const lastIdx = useAnnotationStore.getState().files[nextFile].lastIdx;
     navigate({ search: { file: nextFile, i: lastIdx + 1 } });
   };
-
-  const statusOf = useCallback(
-    (rowIdx: number, annMap: typeof fileState.ann) => {
-      if (!data) return "none";
-      return rowStatus(annMap[String(data.rows[rowIdx][COL.QA_IDX])]);
-    },
-    [data],
-  );
 
   // 1차 검수상태 필터 매칭 (2차 상태 필터와 AND로 조합)
   const rowMatchesPrev = useCallback(
@@ -327,9 +354,12 @@ function AnnotatorInner() {
     const next = findNextIndex(
       data.rows.length,
       idx,
+      // 미확정 seed도 미검수로 취급
       (j) =>
-        statusOf(j, fileState.ann) === "none" &&
-        rowMatchesPrev(j, fileState.prevFilter),
+        matchesFilter(
+          fileState.ann[String(data.rows[j][COL.QA_IDX])],
+          "none",
+        ) && rowMatchesPrev(j, fileState.prevFilter),
       {
         wrap: true,
       },
@@ -424,14 +454,29 @@ function AnnotatorInner() {
         : [],
     [data, fileState.ann],
   );
+  const seeds = useMemo(
+    () =>
+      data
+        ? data.rows.map((r) => !!fileState.ann[String(r[COL.QA_IDX])]?.seed)
+        : [],
+    [data, fileState.ann],
+  );
   const qaIndices = useMemo(
     () => data?.rows.map((r) => Number(r[COL.QA_IDX])) ?? [],
     [data],
   );
+  const videoIndices = useMemo(
+    () => data?.rows.map((r) => Number(r[COL.VIDEO_IDX])) ?? [],
+    [data],
+  );
+  // 탭 진행도는 사람이 확정한 판정만 집계 (미확정 seed 제외)
   const counts = useMemo(
     () =>
       Object.fromEntries(
-        FILE_KEYS.map((key) => [key, Object.keys(files[key].ann).length]),
+        FILE_KEYS.map((key) => [
+          key,
+          Object.values(files[key].ann).filter(isConfirmed).length,
+        ]),
       ) as Record<FileKey, number>,
     [files],
   );
@@ -461,6 +506,7 @@ function AnnotatorInner() {
         idx={idx}
         total={total}
         qaIdx={String(row[COL.QA_IDX])}
+        videoIdx={String(row[COL.VIDEO_IDX])}
         filter={fileState.filter}
         prevFilter={fileState.prevFilter}
         onFilterChange={changeFilter}
@@ -473,7 +519,9 @@ function AnnotatorInner() {
       />
       <StatusStrip
         statuses={statuses}
+        seeds={seeds}
         qaIndices={qaIndices}
+        videoIndices={videoIndices}
         currentIdx={idx}
         onJump={goTo}
       />
@@ -490,6 +538,7 @@ function AnnotatorInner() {
           <PrevReviewPanel row={row} />
           <DecisionBar
             status={currentStatus}
+            seeded={!!ann?.seed}
             fixDraft={visibleFixDraft}
             onAccept={() => decide("accept")}
             onOpenFix={openFix}

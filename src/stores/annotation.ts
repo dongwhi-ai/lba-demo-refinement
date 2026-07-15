@@ -55,6 +55,10 @@ interface AnnotationStore {
   hydrateAnnotations: (
     files: Record<FileKey, Record<string, Annotation>>,
   ) => void;
+  hydrateFileAnnotations: (
+    file: FileKey,
+    ann: Record<string, Annotation>,
+  ) => void;
   setLastIdx: (file: FileKey, idx: number) => void;
   setFilter: (file: FileKey, filter: Filter) => void;
   setPrevFilter: (file: FileKey, prevFilter: PrevFilter) => void;
@@ -104,6 +108,13 @@ export const useAnnotationStore = create<AnnotationStore>()(
               { ...state.files[key], ann: remoteFiles[key] ?? {} },
             ]),
           ) as Record<FileKey, FileAnnState>,
+        })),
+      hydrateFileAnnotations: (file, ann) =>
+        set((state) => ({
+          files: {
+            ...state.files,
+            [file]: { ...state.files[file], ann },
+          },
         })),
       setLastIdx: (file, idx) =>
         set((state) => ({

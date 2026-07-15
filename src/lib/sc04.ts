@@ -74,6 +74,8 @@ export interface Annotation {
   s: Status;
   c?: FixCategory[];
   m?: string;
+  // 1차 판정에서 자동 seed된 항목. 검수자가 확정(재판정)하면 플래그 없이 저장된다.
+  seed?: boolean;
 }
 
 export type Filter = "all" | RowStatus;
@@ -134,6 +136,25 @@ export function parseRefinement(refinement: string): {
   return { cats, memo: tokens.slice(i).join(", ") };
 }
 
+// 1차 판정(검수상태/refinement 열)을 2차의 초기 seed annotation으로 변환
+export function buildSeedAnnotations(
+  rows: Sc04Row[],
+): Record<string, Annotation> {
+  const ann: Record<string, Annotation> = {};
+  for (const row of rows) {
+    const prev = parsePrevStatus(row[COL.PREV_STATUS]);
+    if (!prev) continue;
+    const entry: Annotation = { s: prev, seed: true };
+    if (prev === "fix") {
+      const { cats, memo } = parseRefinement(String(row[COL.REFINEMENT] ?? ""));
+      if (cats.length > 0) entry.c = cats;
+      if (memo !== "") entry.m = memo;
+    }
+    ann[String(row[COL.QA_IDX])] = entry;
+  }
+  return ann;
+}
+
 // scripts/build_data.py YOUTUBE_PATTERNS와 동일한 패턴 유지
 const YOUTUBE_PATTERNS = [
   /youtube\.com\/shorts\/([A-Za-z0-9_-]{11})/,
@@ -154,11 +175,20 @@ export function rowStatus(ann: Annotation | undefined): RowStatus {
   return ann ? ann.s : "none";
 }
 
+// 진행도/필터는 "사람이 확정한 판정" 기준: 미확정 seed는 미검수로 집계
+export function isConfirmed(ann: Annotation | undefined): boolean {
+  return !!ann && !ann.seed;
+}
+
+export function confirmedStatus(ann: Annotation | undefined): RowStatus {
+  return isConfirmed(ann) ? (ann as Annotation).s : "none";
+}
+
 export function matchesFilter(
   ann: Annotation | undefined,
   filter: Filter,
 ): boolean {
-  return filter === "all" || rowStatus(ann) === filter;
+  return filter === "all" || confirmedStatus(ann) === filter;
 }
 
 // 검수 가이드 규격: 채택 → 빈칸, 수정 → "fix, <카테고리...>, <메모>", 폐기 → "del"

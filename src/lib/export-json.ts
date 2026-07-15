@@ -34,6 +34,8 @@ export function exportAnnotationsJson(
         categories: rowAnn?.c ?? [],
         memo: rowAnn?.m ?? "",
         refinement: buildRefinement(rowAnn),
+        // true면 1차 판정 seed 그대로이며 아직 사람이 확정하지 않음
+        seeded: !!rowAnn?.seed,
       };
     }),
   };

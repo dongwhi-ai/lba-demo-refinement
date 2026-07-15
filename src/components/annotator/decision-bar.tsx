@@ -69,6 +69,7 @@ const FIX_CATEGORY_EXAMPLES: Record<FixCategory, string[]> = {
 
 export function DecisionBar({
   status,
+  seeded,
   fixDraft,
   onAccept,
   onOpenFix,
@@ -79,6 +80,8 @@ export function DecisionBar({
   onCancelFix,
 }: {
   status: RowStatus;
+  // 1차 판정 seed 상태 (같은 판정 키를 다시 누르면 확정됨)
+  seeded: boolean;
   fixDraft: FixDraft | null;
   onAccept: () => void;
   onOpenFix: () => void;
@@ -123,6 +126,11 @@ export function DecisionBar({
         <span className="text-muted-foreground text-xs">
           현재: {STATUS_LABELS[status]}
         </span>
+        {seeded && (
+          <span className="text-amber-600 text-xs">
+            1차 seed 미확정 — 판정 키를 누르면 확정
+          </span>
+        )}
         {status !== "none" && (
           <Button variant="ghost" size="sm" onClick={onClear}>
             검수 취소

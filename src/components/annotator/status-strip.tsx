@@ -12,31 +12,58 @@ const STATUS_CLASS: Record<RowStatus, string> = {
   del: "bg-red-500/80 hover:bg-red-500",
 };
 
+// 같은 video_idx가 연속된 구간을 하나의 세그먼트로 묶는다
+function videoGroups(videoIndices: number[]): { start: number; end: number }[] {
+  const groups: { start: number; end: number }[] = [];
+  for (let i = 0; i < videoIndices.length; i++) {
+    const last = groups[groups.length - 1];
+    if (last && videoIndices[i] === videoIndices[last.start]) {
+      last.end = i;
+    } else {
+      groups.push({ start: i, end: i });
+    }
+  }
+  return groups;
+}
+
 export const StatusStrip = memo(function StatusStrip({
   statuses,
+  seeds,
   qaIndices,
+  videoIndices,
   currentIdx,
   onJump,
 }: {
   statuses: RowStatus[];
+  seeds: boolean[];
   qaIndices: number[];
+  videoIndices: number[];
   currentIdx: number;
   onJump: (idx: number) => void;
 }) {
   return (
-    <div className="grid grid-cols-[repeat(55,minmax(0,1fr))] gap-px border p-1">
-      {statuses.map((status, idx) => (
-        <button
-          type="button"
-          key={qaIndices[idx]}
-          title={`#${idx + 1} · QA_idx ${qaIndices[idx]} · ${STATUS_LABELS[status]}`}
-          onClick={() => onJump(idx)}
-          className={cn(
-            "h-3 w-full",
-            STATUS_CLASS[status],
-            idx === currentIdx && "ring-2 ring-ring",
-          )}
-        />
+    <div className="flex flex-wrap gap-x-1.5 gap-y-1 border p-1">
+      {videoGroups(videoIndices).map((group) => (
+        <div key={group.start} className="flex gap-px">
+          {statuses.slice(group.start, group.end + 1).map((status, offset) => {
+            const idx = group.start + offset;
+            return (
+              <button
+                type="button"
+                key={qaIndices[idx]}
+                title={`#${idx + 1} · 영상 ${videoIndices[idx]} · QA_idx ${qaIndices[idx]} · ${STATUS_LABELS[status]}${seeds[idx] ? " (1차 seed 미확정)" : ""}`}
+                onClick={() => onJump(idx)}
+                className={cn(
+                  "h-3 w-2",
+                  STATUS_CLASS[status],
+                  // 미확정 seed는 옅은 색으로 확정 판정과 구분
+                  seeds[idx] && "opacity-40 hover:opacity-80",
+                  idx === currentIdx && "ring-2 ring-ring",
+                )}
+              />
+            );
+          })}
+        </div>
       ))}
     </div>
   );

@@ -21,6 +21,7 @@ const annotationSchema = z.object({
   s: statusSchema,
   c: z.array(fixCategorySchema).optional(),
   m: z.string().optional(),
+  seed: z.boolean().optional(),
 });
 const annotationRecordSchema = z.record(z.string(), annotationSchema);
 const fileInputSchema = z.object({
@@ -29,6 +30,9 @@ const fileInputSchema = z.object({
 const patchInputSchema = fileInputSchema.extend({
   qaIdx: z.string().min(1).max(64),
   annotation: annotationSchema.nullable(),
+});
+const seedInputSchema = fileInputSchema.extend({
+  ann: annotationRecordSchema,
 });
 const snapshotSchema = z.object({
   version: z.literal(REMOTE_SCHEMA_VERSION),
@@ -104,6 +108,36 @@ export const loadFileAnnotations = createServerFn({ method: "GET" })
     const current = await readSnapshot(bucket, data.file);
     if (!current) return { found: false as const };
     return { found: true as const, snapshot: current.snapshot };
+  });
+
+// 1차 판정 seed 채우기: 이미 저장된 판정은 유지하고, 비어 있는 행만 seed로 채운다 (멱등)
+export const seedFileAnnotations = createServerFn({ method: "POST" })
+  .inputValidator(seedInputSchema)
+  .handler(async ({ data }) => {
+    const bucket = await getBucket();
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await readSnapshot(bucket, data.file);
+      const existing = current?.snapshot.ann ?? {};
+      const merged = { ...data.ann, ...existing };
+      if (
+        current &&
+        Object.keys(merged).length === Object.keys(existing).length
+      ) {
+        return { saved: true as const, snapshot: current.snapshot };
+      }
+      const next = createSnapshot(data.file, merged);
+      const written = await writeSnapshot(bucket, next, current?.etag ?? null);
+      if (written) {
+        return { saved: true as const, snapshot: next };
+      }
+    }
+
+    const latest = await readSnapshot(bucket, data.file);
+    return {
+      saved: false as const,
+      snapshot: latest?.snapshot ?? createSnapshot(data.file, {}),
+    };
   });
 
 export const patchFileAnnotation = createServerFn({ method: "POST" })

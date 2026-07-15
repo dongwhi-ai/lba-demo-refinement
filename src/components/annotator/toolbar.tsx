@@ -18,6 +18,7 @@ export function Toolbar({
   idx,
   total,
   qaIdx,
+  videoIdx,
   filter,
   prevFilter,
   onFilterChange,
@@ -31,6 +32,7 @@ export function Toolbar({
   idx: number;
   total: number;
   qaIdx: string;
+  videoIdx: string;
   filter: Filter;
   prevFilter: PrevFilter;
   onFilterChange: (filter: Filter) => void;
@@ -46,7 +48,7 @@ export function Toolbar({
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-xs tabular-nums">
-        #{idx + 1} / {total} · QA_idx {qaIdx}
+        #{idx + 1} / {total} · 영상 {videoIdx} · QA_idx {qaIdx}
       </span>
       <form
         onSubmit={(e) => {
