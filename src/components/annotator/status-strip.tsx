@@ -24,7 +24,7 @@ export const StatusStrip = memo(function StatusStrip({
   onJump: (idx: number) => void;
 }) {
   return (
-    <div className="grid grid-cols-[repeat(50,minmax(0,1fr))] gap-px border p-1">
+    <div className="grid grid-cols-[repeat(55,minmax(0,1fr))] gap-px border p-1">
       {statuses.map((status, idx) => (
         <button
           type="button"

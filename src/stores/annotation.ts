@@ -8,9 +8,11 @@ import {
   FILE_KEYS,
   type FileKey,
   type Filter,
+  type PrevFilter,
 } from "@/lib/sc04";
 
-const STORAGE_KEY = "lba-refine-v1";
+// v2: 2차 정제. 1차(lba-refine-v1) localStorage 캐시가 hydrate되지 않도록 키 자체를 변경
+const STORAGE_KEY = "lba-refine-v2";
 
 // 손상된 저장값은 backup 키로 보존한 뒤 fresh start
 if (typeof window !== "undefined") {
@@ -40,6 +42,7 @@ const noopStorage: Storage = {
 export interface FileAnnState {
   lastIdx: number;
   filter: Filter;
+  prevFilter: PrevFilter;
   ann: Record<string, Annotation>;
 }
 
@@ -54,11 +57,13 @@ interface AnnotationStore {
   ) => void;
   setLastIdx: (file: FileKey, idx: number) => void;
   setFilter: (file: FileKey, filter: Filter) => void;
+  setPrevFilter: (file: FileKey, prevFilter: PrevFilter) => void;
 }
 
 const defaultFileState = (): FileAnnState => ({
   lastIdx: 0,
   filter: "all",
+  prevFilter: "all",
   ann: {},
 });
 
@@ -112,10 +117,17 @@ export const useAnnotationStore = create<AnnotationStore>()(
         set((state) => ({
           files: { ...state.files, [file]: { ...state.files[file], filter } },
         })),
+      setPrevFilter: (file, prevFilter) =>
+        set((state) => ({
+          files: {
+            ...state.files,
+            [file]: { ...state.files[file], prevFilter },
+          },
+        })),
     }),
     {
       name: STORAGE_KEY,
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() =>
         typeof window !== "undefined" ? window.localStorage : noopStorage,
       ),

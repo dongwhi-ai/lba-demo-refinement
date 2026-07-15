@@ -14,7 +14,7 @@ export function exportAnnotationsJson(
   ann: Record<string, Annotation>,
 ): void {
   const payload = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     exportedAt: new Date().toISOString(),
     file: data.key,
     label: data.label,
@@ -24,6 +24,11 @@ export function exportAnnotationsJson(
       const rowAnn = ann[qaIdx];
       return {
         qaIdx,
+        // 1차 정제 결과 (원본 xlsx의 검수상태/refinement 열)
+        prev: {
+          status: String(row[COL.PREV_STATUS] ?? ""),
+          refinement: String(row[COL.REFINEMENT] ?? ""),
+        },
         status: rowStatus(rowAnn),
         statusLabel: STATUS_LABELS[rowStatus(rowAnn)],
         categories: rowAnn?.c ?? [],
@@ -38,7 +43,7 @@ export function exportAnnotationsJson(
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `sc04_results_${data.key}_reviewed_${timestamp()}.json`;
+  link.download = `sc04_results_${data.key}_round2_${timestamp()}.json`;
   link.click();
   URL.revokeObjectURL(url);
 }

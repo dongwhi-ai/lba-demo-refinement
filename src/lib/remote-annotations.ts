@@ -4,14 +4,15 @@ import { z } from "zod";
 import { type Annotation, FILE_KEYS, type FileKey } from "@/lib/sc04";
 
 export interface RemoteAnnotationFileSnapshot {
-  version: 1;
+  version: 2;
   file: FileKey;
   updatedAt: string;
   ann: Record<string, Annotation>;
 }
 
-const REMOTE_SCHEMA_VERSION = 1;
-const R2_KEY_PREFIX = "annotations/files";
+// v2: 2차 정제. 1차 객체(annotations/files/*)와 키가 겹치지 않도록 prefix 분리
+const REMOTE_SCHEMA_VERSION = 2;
+const R2_KEY_PREFIX = "annotations/round2/files";
 
 const fileKeySchema = z.enum(FILE_KEYS);
 const fixCategorySchema = z.enum(["Aa", "Ab", "Ac", "Ba", "Bb", "C"]);

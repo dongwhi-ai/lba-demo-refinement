@@ -11,15 +11,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { Filter } from "@/lib/sc04";
-import { FILTER_OPTIONS } from "@/lib/sc04";
+import type { Filter, PrevFilter } from "@/lib/sc04";
+import { FILTER_OPTIONS, PREV_FILTER_OPTIONS } from "@/lib/sc04";
 
 export function Toolbar({
   idx,
   total,
   qaIdx,
   filter,
+  prevFilter,
   onFilterChange,
+  onPrevFilterChange,
   onJump,
   onNextUnreviewed,
   onExportCurrent,
@@ -30,7 +32,9 @@ export function Toolbar({
   total: number;
   qaIdx: string;
   filter: Filter;
+  prevFilter: PrevFilter;
   onFilterChange: (filter: Filter) => void;
+  onPrevFilterChange: (prevFilter: PrevFilter) => void;
   onJump: (value: string) => void;
   onNextUnreviewed: () => void;
   onExportCurrent: () => void;
@@ -63,6 +67,22 @@ export function Toolbar({
           이동
         </Button>
       </form>
+      <Select
+        value={prevFilter}
+        onValueChange={(value) => onPrevFilterChange(value as PrevFilter)}
+        items={PREV_FILTER_OPTIONS}
+      >
+        <SelectTrigger size="sm" className="w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {PREV_FILTER_OPTIONS.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <Select
         value={filter}
         onValueChange={(value) => onFilterChange(value as Filter)}

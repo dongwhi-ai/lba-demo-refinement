@@ -1,8 +1,15 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import type { Sc04Row } from "@/lib/sc04";
-import { CHOICE_COUNT, COL } from "@/lib/sc04";
+import type { FixCategory, Sc04Row, Status } from "@/lib/sc04";
+import {
+  CHOICE_COUNT,
+  COL,
+  FIX_CATEGORIES,
+  parsePrevStatus,
+  parseRefinement,
+  STATUS_LABELS,
+} from "@/lib/sc04";
 import { cn } from "@/lib/utils";
 
 function EmptyValue({ label }: { label: string }) {
@@ -65,6 +72,45 @@ export function SampleCard({ row }: { row: Sc04Row }) {
       )}
       {answerNum === null && (
         <p className="text-destructive text-xs">정답 없음</p>
+      )}
+    </div>
+  );
+}
+
+const PREV_STATUS_CLASS: Record<Status, string> = {
+  accept: "border-green-600 bg-green-500/10 text-green-700",
+  fix: "border-amber-500 bg-amber-400/10 text-amber-700",
+  del: "border-red-600 bg-red-500/10 text-red-700",
+};
+
+const FIX_CATEGORY_LABELS = Object.fromEntries(
+  FIX_CATEGORIES.map((c) => [c.value, c.label]),
+) as Record<FixCategory, string>;
+
+// 1차 정제 결과(검수상태/refinement 열)를 읽기 전용으로 표시
+export function PrevReviewPanel({ row }: { row: Sc04Row }) {
+  const prev = parsePrevStatus(row[COL.PREV_STATUS]);
+  const refinement = String(row[COL.REFINEMENT] ?? "");
+  const { cats, memo } =
+    prev === "fix" ? parseRefinement(refinement) : { cats: [], memo: "" };
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border border-dashed px-2 py-1.5 text-xs">
+      <span className="mr-0.5 font-medium text-muted-foreground">1차 검수</span>
+      {prev ? (
+        <Badge variant="outline" className={PREV_STATUS_CLASS[prev]}>
+          {STATUS_LABELS[prev]}
+        </Badge>
+      ) : (
+        <EmptyValue label="상태 없음" />
+      )}
+      {cats.map((cat) => (
+        <Badge key={cat} variant="secondary">
+          {cat} · {FIX_CATEGORY_LABELS[cat]}
+        </Badge>
+      ))}
+      {memo !== "" && (
+        <span className="whitespace-pre-wrap leading-relaxed">{memo}</span>
       )}
     </div>
   );

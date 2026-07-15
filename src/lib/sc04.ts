@@ -7,9 +7,10 @@ export const FILE_LABELS: Record<FileKey, string> = {
   assembly: "조립",
 };
 
-export const ROWS_PER_FILE = 500;
+export const ROWS_PER_FILE = 825;
 
 // public/data/*.json row 배열의 열 인덱스 (scripts/build_data.py EXPECTED_COLUMNS와 동일 순서)
+// v1.5(2차 정제): 정답 뒤에 1차 검수상태 열이 삽입되어 refinement 이후가 한 칸씩 밀림
 export const COL = {
   VIDEO_IDX: 0,
   QA_IDX: 1,
@@ -20,9 +21,10 @@ export const COL = {
   QUESTION: 6,
   CHOICE_1: 7,
   ANSWER: 12,
-  REFINEMENT: 13,
-  RATIONALE: 14,
-  NOTE: 15,
+  PREV_STATUS: 13,
+  REFINEMENT: 14,
+  RATIONALE: 15,
+  NOTE: 16,
 } as const;
 
 export const CHOICE_COUNT = 5;
@@ -83,6 +85,54 @@ export const FILTER_OPTIONS: { value: Filter; label: string }[] = [
   { value: "fix", label: "수정" },
   { value: "del", label: "폐기" },
 ];
+
+// ---- 1차 정제 결과 (v1.5 xlsx의 검수상태/refinement 열) ----
+
+// 모든 행에 1차 상태가 존재하므로 "none"은 불필요
+export type PrevFilter = "all" | Status;
+
+export const PREV_FILTER_OPTIONS: { value: PrevFilter; label: string }[] = [
+  { value: "all", label: "1차 전체" },
+  { value: "accept", label: "1차 채택" },
+  { value: "fix", label: "1차 수정" },
+  { value: "del", label: "1차 폐기" },
+];
+
+const PREV_STATUS_MAP: Record<string, Status> = {
+  채택: "accept",
+  수정: "fix",
+  폐기: "del",
+};
+
+export function parsePrevStatus(cell: CellValue | undefined): Status | null {
+  return PREV_STATUS_MAP[String(cell ?? "")] ?? null;
+}
+
+export function matchesPrevFilter(
+  prev: Status | null,
+  filter: PrevFilter,
+): boolean {
+  return filter === "all" || prev === filter;
+}
+
+const FIX_CATEGORY_SET = new Set<string>(Object.keys(CATEGORY_ORDER));
+
+// buildRefinement의 역함수: "fix, <카테고리...>, <메모>" 파싱.
+// 메모에 ", "가 포함될 수 있으므로 선두의 유효 카테고리 토큰만 소비하고 나머지는 재결합한다.
+export function parseRefinement(refinement: string): {
+  cats: FixCategory[];
+  memo: string;
+} {
+  const tokens = refinement.split(", ");
+  if (tokens[0] !== "fix") return { cats: [], memo: refinement };
+  let i = 1;
+  const cats: FixCategory[] = [];
+  while (i < tokens.length && FIX_CATEGORY_SET.has(tokens[i])) {
+    cats.push(tokens[i] as FixCategory);
+    i += 1;
+  }
+  return { cats, memo: tokens.slice(i).join(", ") };
+}
 
 // scripts/build_data.py YOUTUBE_PATTERNS와 동일한 패턴 유지
 const YOUTUBE_PATTERNS = [
