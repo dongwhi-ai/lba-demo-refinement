@@ -1,4 +1,4 @@
-# LBA Data Refinement
+# LBA Demo Data Refinement
 
 sc04 video-QA 샘플(드라마/요리/조립, 각 500행)을 한 행씩 보며 **채택 / 수정 / 폐기**를 판정하는 검수용 SPA.
 
